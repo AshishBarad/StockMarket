@@ -1,5 +1,9 @@
 version: '3.8'
 
+networks:
+  docker_internal:
+    external: true
+
 services:
   stockmarket:
     build:
@@ -9,14 +13,14 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      # Persist the SQLite DB across restarts — signals, settings, paper trades all survive
       - stockmarket_db:/app/db
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+    networks:
+      - docker_internal
     restart: unless-stopped
-    # Resource limits for i3 server (2 cores, 8GB RAM)
     deploy:
       resources:
         limits:
