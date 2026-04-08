@@ -186,7 +186,8 @@ def place_order_mock(symbol, transaction_type, quantity, order_type, product_typ
 def get_dhan_indices():
     dhan = get_dhan_client()
     nifty, sensex = 0.0, 0.0
-    if not dhan: return nifty, sensex, "Dhan API Not Connected"
+    nifty_chg, nifty_pct, sensex_chg, sensex_pct = 0.0, 0.0, 0.0, 0.0
+    if not dhan: return nifty, sensex, nifty_chg, nifty_pct, sensex_chg, sensex_pct, "Dhan API Not Connected"
     
     import pandas as pd
     from datetime import datetime
@@ -203,7 +204,12 @@ def get_dhan_indices():
         if res and res.get('status') == 'success':
             data = res.get('data', {})
             closes = data.get('close', [])
-            if closes:
+            if len(closes) >= 2:
+                nifty = float(closes[-1])
+                prev = float(closes[-2])
+                nifty_chg = round(nifty - prev, 2)
+                nifty_pct = round((nifty_chg / prev) * 100, 2)
+            elif len(closes) == 1:
                 nifty = float(closes[-1])
             
         # RATE LIMITING: 1 request per second for Data APIs
@@ -217,16 +223,21 @@ def get_dhan_indices():
         if res and res.get('status') == 'success':
             data = res.get('data', {})
             closes = data.get('close', [])
-            if closes:
+            if len(closes) >= 2:
+                sensex = float(closes[-1])
+                prev = float(closes[-2])
+                sensex_chg = round(sensex - prev, 2)
+                sensex_pct = round((sensex_chg / prev) * 100, 2)
+            elif len(closes) == 1:
                 sensex = float(closes[-1])
             
-        return round(nifty, 2), round(sensex, 2), None
+        return round(nifty, 2), round(sensex, 2), nifty_chg, nifty_pct, sensex_chg, sensex_pct, None
     except Exception as e:
-        return 0.0, 0.0, str(e)
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, str(e)
 
 def get_dhan_live_price(symbol):
     dhan = get_dhan_client()
-    if not dhan: return 0.0, "Dhan API Not Connected"
+    if not dhan: return 0.0, 0.0, "Dhan API Not Connected"
     
     try:
         import pandas as pd
@@ -237,7 +248,7 @@ def get_dhan_live_price(symbol):
         df_master = load_dhan_scrip_master()
         clean_symbol = symbol.replace('.NS', '')
         match = df_master[df_master['SEM_TRADING_SYMBOL'] == clean_symbol]
-        if match.empty: return 0.0, "Symbol not found in Scrip Master"
+        if match.empty: return 0.0, 0.0, "Symbol not found in Scrip Master"
         
         sec_id = str(int(match.iloc[0]['SEM_SMST_SECURITY_ID']))
         
@@ -253,11 +264,13 @@ def get_dhan_live_price(symbol):
         if res and res.get('status') == 'success':
             data = res.get('data', {})
             closes = data.get('close', [])
-            if closes:
-                return float(closes[-1]), None
-        return 0.0, str(res.get('remarks', 'API Failure'))
+            if len(closes) >= 2:
+                return float(closes[-1]), float(closes[-2]), None
+            elif len(closes) == 1:
+                return float(closes[-1]), float(closes[-1]), None
+        return 0.0, 0.0, str(res.get('remarks', 'API Failure'))
     except Exception as e:
-        return 0.0, str(e)
+        return 0.0, 0.0, str(e)
 
 def load_dhan_chart_data(symbol):
     dhan = get_dhan_client()

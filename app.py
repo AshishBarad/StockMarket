@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import plotly.graph_objs as go
 import os
 from dotenv import load_dotenv
@@ -122,7 +121,7 @@ def get_cached_live_price(symbol):
     
     cache = st.session_state.cache_price.get(symbol)
     if not cache or time.time() - cache['time'] > ttl:
-        data = get_dhan_live_price(symbol)
+        data = get_dhan_live_price(symbol)  # returns (cur, prev, err)
         st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
         return data
     return cache['data']
@@ -136,7 +135,7 @@ def get_indices():
         return data
     return st.session_state.cache_indices['data']
 
-nifty_val, sensex_val, idx_err = get_indices()
+nifty_val, sensex_val, nifty_chg, nifty_pct, sensex_chg, sensex_pct, idx_err = get_indices()
 
 # Count pending AI signals for notification badge
 pending_signals = get_pending_signals()
@@ -148,17 +147,31 @@ notif_badge = f" 🔔 ({total_pending}" + " new)" if total_pending > 0 else ""
 col_title, col_nifty, col_sensex = st.columns([3, 1, 1])
 with col_title:
     st.title(f"📈 Stock Market Dashboard{notif_badge}")
+
+def _idx_card(label, val, chg, pct, base_color):
+    """Render a single index card with change badge."""
+    if val == 0.0:
+        return f"""
+        <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'>
+          <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
+          <div style='font-size:24px;color:#ff5722'>⚠ Error</div>
+        </div>"""
+    sign = "+" if chg >= 0 else ""
+    chg_color = "#4caf50" if chg >= 0 else "#ff5722"
+    arrow = "▲" if chg >= 0 else "▼"
+    return f"""
+    <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'>
+      <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
+      <div style='font-size:24px;font-weight:500;color:{base_color}'>{val:,.2f}</div>
+      <div style='font-size:13px;color:{chg_color};margin-top:4px'>
+        {arrow} {sign}{chg:,.2f} ({sign}{pct:.2f}%)
+      </div>
+    </div>"""
+
 with col_nifty:
-    nifty_color = "#4caf50" if nifty_val > 0 else "#9B9B9B"
-    if idx_err:
-        st.markdown(f"<div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'><div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>NIFTY 50</div><div style='font-size:24px;color:#ff5722'>⚠ Error</div></div>", unsafe_allow_html=True)
-    else:
-        st.markdown(f"<div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'><div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>NIFTY 50</div><div style='font-size:24px;font-weight:500;color:{nifty_color}'>{nifty_val:,.2f}</div></div>", unsafe_allow_html=True)
+    st.markdown(_idx_card("NIFTY 50", nifty_val, nifty_chg, nifty_pct, "#4caf50"), unsafe_allow_html=True)
 with col_sensex:
-    if idx_err:
-        st.markdown(f"<div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'><div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>SENSEX</div><div style='font-size:24px;color:#ff5722'>⚠ Error</div></div>", unsafe_allow_html=True)
-    else:
-        st.markdown(f"<div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'><div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>SENSEX</div><div style='font-size:24px;font-weight:500;color:#4184f3'>{sensex_val:,.2f}</div></div>", unsafe_allow_html=True)
+    st.markdown(_idx_card("SENSEX", sensex_val, sensex_chg, sensex_pct, "#4184f3"), unsafe_allow_html=True)
 st.divider()
 
 # --- Portfolio Summary & Margin ---
@@ -199,14 +212,24 @@ if holdings_data and holdings_data.get("status") == "success" and holdings_data.
         h_qty = float(h.get('totalQty', h.get('heldQuantity', 0)))
         if h_qty <= 0: continue
         h_avg = float(h.get('avgCostPrice', h.get('costPrice', 0)))
-        cur_price2, _ = get_cached_live_price(sym)
+        cur_price2, prev_price2, _ = get_cached_live_price(sym)
         h_cur = cur_price2
+        day_chg = round(cur_price2 - prev_price2, 2)
+        day_pct = round((day_chg / prev_price2) * 100, 2) if prev_price2 > 0 else 0.0
+        chg_sign = "+" if day_chg >= 0 else ""
+        chg_color = "#4caf50" if day_chg >= 0 else "#ff5722"
+        chg_arrow = "▲" if day_chg >= 0 else "▼"
         h_pnl = (h_cur - h_avg) * h_qty
         h_pct = (h_pnl / (h_avg * h_qty) * 100) if h_avg > 0 else 0.0
         hc_class = "green" if h_pnl >= 0 else "red"
         h_sign = "+" if h_pnl >= 0 else ""
-        with st.expander(f"📦 {sym} ────── Qty: {int(h_qty)}"):
-            st.markdown(f"""**Avg:** `₹{h_avg:,.2f}` | **CMP:** `₹{h_cur:,.2f}` | **P&L:** <span class="{hc_class}">{h_sign}₹{h_pnl:,.2f} ({h_sign}{h_pct:.2f}%)</span>""", unsafe_allow_html=True)
+        with st.expander(f"📦 {sym} ──── Qty: {int(h_qty)}"):
+            st.markdown(
+                f"""**Avg:** `₹{h_avg:,.2f}` | **CMP:** `₹{h_cur:,.2f}` """
+                f"""<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"""
+                f""" | **P&L:** <span class="{hc_class}">{h_sign}₹{h_pnl:,.2f} ({h_sign}{h_pct:.2f}%)</span>""",
+                unsafe_allow_html=True
+            )
             col_s, col_c = st.columns(2)
             with col_s:
                 if st.button("Exit Position", key=f"pos_exit_{sym}", use_container_width=True):
@@ -307,20 +330,35 @@ with tab_watchlist:
         st.info("Search above to add stocks to your Watchlist.")
     else:
         for symbol in st.session_state.watchlist:
-            cur_price, stock_fetch_err = get_cached_live_price(symbol)
+            cur_price, prev_price, stock_fetch_err = get_cached_live_price(symbol)
+            day_chg = round(cur_price - prev_price, 2)
+            day_pct = round((day_chg / prev_price) * 100, 2) if prev_price > 0 else 0.0
+            chg_sign = "+" if day_chg >= 0 else ""
+            chg_color = "#4caf50" if day_chg >= 0 else "#ff5722"
+            chg_arrow = "▲" if day_chg >= 0 else "▼"
             holding = get_holding_for_symbol(symbol)
             
-            header_txt = f"{symbol}  ──  ₹{cur_price:,.2f}"
+            # Build expander header with price + day change
+            header_txt = (
+                f"{symbol}  ──  ₹{cur_price:,.2f}  "
+                f"<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"
+            )
             if holding:
                 h_qty = float(holding.get('totalQty', holding.get('heldQuantity', 0)))
                 h_avg = float(holding.get('avgCostPrice', holding.get('costPrice', 0)))
                 h_pnl = (cur_price - h_avg) * h_qty
-                h_sign = "+" if h_pnl >= 0 else ""
-                header_txt += f"  |  Holding {int(h_qty)} qty  {h_sign}₹{h_pnl:,.0f}"
+                h_sign2 = "+" if h_pnl >= 0 else ""
+                h_pnl_color = "#4caf50" if h_pnl >= 0 else "#ff5722"
+                header_txt += f"  |  Holding {int(h_qty)} qty <span style='color:{h_pnl_color}'>{h_sign2}₹{h_pnl:,.0f}</span>"
             
             with st.expander(header_txt):
                 if stock_fetch_err:
                     st.warning(f"Price fetch error: {stock_fetch_err}")
+                # Day change row
+                st.markdown(
+                    f"₹{cur_price:,.2f} <span style='color:{chg_color};font-size:14px'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>",
+                    unsafe_allow_html=True
+                )
                 if holding:
                     h_qty = float(holding.get('totalQty', holding.get('heldQuantity', 0)))
                     h_avg = float(holding.get('avgCostPrice', holding.get('costPrice', 0)))
