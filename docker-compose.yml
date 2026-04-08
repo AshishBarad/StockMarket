@@ -1,10 +1,31 @@
 version: '3.8'
+
 services:
-  app:
-    build: .
+  stockmarket:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stockmarket_ai
     ports:
       - "8501:8501"
     volumes:
-      - .:/app
+      # Persist the SQLite DB across restarts — signals, settings, paper trades all survive
+      - stockmarket_db:/app/db
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    # Resource limits for i3 server (2 cores, 8GB RAM)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+volumes:
+  stockmarket_db:
+    driver: local
