@@ -236,39 +236,68 @@ def get_dhan_indices():
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, str(e)
 
 def get_dhan_live_price(symbol):
+    """
+    Returns (current_price, prev_close, error).
+    During market hours (9:15-15:30 IST): fetches latest intraday minute bar.
+    Outside market hours: returns last two EOD closes.
+    """
     dhan = get_dhan_client()
     if not dhan: return 0.0, 0.0, "Dhan API Not Connected"
-    
+
     try:
         import pandas as pd
-        from datetime import datetime
+        from datetime import datetime, time as dtime
         import time
         from utils.data_loader import load_dhan_scrip_master
-        
+
         df_master = load_dhan_scrip_master()
         clean_symbol = symbol.replace('.NS', '')
         match = df_master[df_master['SEM_TRADING_SYMBOL'] == clean_symbol]
         if match.empty: return 0.0, 0.0, "Symbol not found in Scrip Master"
-        
-        sec_id = str(int(match.iloc[0]['SEM_SMST_SECURITY_ID']))
-        
-        now_dt = datetime.today().strftime('%Y-%m-%d')
-        past_dt = (datetime.today() - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
-        
-        # RATE LIMITING: Throttle every quote call
-        time.sleep(1.05)
+
+        sec_id   = str(int(match.iloc[0]['SEM_SMST_SECURITY_ID']))
+        now_dt   = datetime.today().strftime('%Y-%m-%d')
+        past_dt  = (datetime.today() - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
+
+        # Check if inside NSE market hours (9:15 AM - 3:30 PM IST weekdays)
+        now_t = datetime.now().time()
+        is_market_hours = dtime(9, 15) <= now_t <= dtime(15, 30)
+
+        time.sleep(1.05)  # rate limit
+
+        # Always fetch EOD to get prev close for day-change calc
         res = dhan.historical_daily_data(
             security_id=sec_id, exchange_segment='NSE_EQ',
             instrument_type='EQUITY', from_date=past_dt, to_date=now_dt
         )
+        eod_closes = []
         if res and res.get('status') == 'success':
-            data = res.get('data', {})
-            closes = data.get('close', [])
-            if len(closes) >= 2:
-                return float(closes[-1]), float(closes[-2]), None
-            elif len(closes) == 1:
-                return float(closes[-1]), float(closes[-1]), None
-        return 0.0, 0.0, str(res.get('remarks', 'API Failure'))
+            eod_closes = res.get('data', {}).get('close', [])
+
+        prev_close = float(eod_closes[-1]) if eod_closes else 0.0
+
+        if is_market_hours:
+            # Try intraday for a live tick price
+            time.sleep(1.05)
+            try:
+                intra = dhan.intraday_minute_data(
+                    security_id=sec_id,
+                    exchange_segment='NSE_EQ',
+                    instrument_type='EQUITY'
+                )
+                if intra and intra.get('status') == 'success':
+                    intra_closes = intra.get('data', {}).get('close', [])
+                    if intra_closes:
+                        return float(intra_closes[-1]), prev_close, None
+            except Exception:
+                pass  # fall through to EOD
+
+        # Outside hours or intraday failed: use last two EOD closes
+        if len(eod_closes) >= 2:
+            return float(eod_closes[-1]), float(eod_closes[-2]), None
+        elif len(eod_closes) == 1:
+            return float(eod_closes[-1]), float(eod_closes[-1]), None
+        return 0.0, 0.0, "No price data available"
     except Exception as e:
         return 0.0, 0.0, str(e)
 
