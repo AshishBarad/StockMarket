@@ -120,7 +120,7 @@ def get_cached_live_price(symbol):
     if 'cache_price' not in st.session_state: st.session_state.cache_price = {}
     
     cache = st.session_state.cache_price.get(symbol)
-    if not cache or time.time() - cache['time'] > ttl:
+    if not cache or time.time() - cache['time'] > ttl or len(cache['data']) != 3:
         data = get_dhan_live_price(symbol)  # returns (cur, prev, err)
         st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
         return data
@@ -129,11 +129,15 @@ def get_cached_live_price(symbol):
 # --- Top Header: Nifty / Sensex ---
 def get_indices():
     ttl = st.session_state.get('refresh_indices', 2)
-    if 'cache_indices' not in st.session_state or time.time() - st.session_state.cache_indices['time'] > ttl:
+    cached = st.session_state.get('cache_indices')
+    # Invalidate if missing, expired, OR wrong shape (old 3-tuple vs new 7-tuple)
+    if (not cached
+            or time.time() - cached['time'] > ttl
+            or len(cached['data']) != 7):
         data = get_dhan_indices()
         st.session_state.cache_indices = {'time': time.time(), 'data': data}
         return data
-    return st.session_state.cache_indices['data']
+    return cached['data']
 
 nifty_val, sensex_val, nifty_chg, nifty_pct, sensex_chg, sensex_pct, idx_err = get_indices()
 
@@ -223,7 +227,10 @@ if holdings_data and holdings_data.get("status") == "success" and holdings_data.
         h_pct = (h_pnl / (h_avg * h_qty) * 100) if h_avg > 0 else 0.0
         hc_class = "green" if h_pnl >= 0 else "red"
         h_sign = "+" if h_pnl >= 0 else ""
-        with st.expander(f"📦 {sym} ──── Qty: {int(h_qty)}"):
+        # Plain text expander header — st.expander doesn't render HTML
+        pos_arrow = "▲" if day_chg >= 0 else "▼"
+        pos_header = f"📦 {sym}  ──  Qty {int(h_qty)}  |  CMP ₹{h_cur:,.2f}  {pos_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)"
+        with st.expander(pos_header):
             st.markdown(
                 f"""**Avg:** `₹{h_avg:,.2f}` | **CMP:** `₹{h_cur:,.2f}` """
                 f"""<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"""
@@ -338,20 +345,17 @@ with tab_watchlist:
             chg_arrow = "▲" if day_chg >= 0 else "▼"
             holding = get_holding_for_symbol(symbol)
             
-            # Build expander header with price + day change
-            header_txt = (
-                f"{symbol}  ──  ₹{cur_price:,.2f}  "
-                f"<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"
-            )
+            # Plain-text header for st.expander (no HTML allowed in labels)
+            chg_arrow_plain = "▲" if day_chg >= 0 else "▼"
+            header_plain = f"{symbol}  ──  ₹{cur_price:,.2f}  {chg_arrow_plain} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)"
             if holding:
                 h_qty = float(holding.get('totalQty', holding.get('heldQuantity', 0)))
                 h_avg = float(holding.get('avgCostPrice', holding.get('costPrice', 0)))
                 h_pnl = (cur_price - h_avg) * h_qty
                 h_sign2 = "+" if h_pnl >= 0 else ""
-                h_pnl_color = "#4caf50" if h_pnl >= 0 else "#ff5722"
-                header_txt += f"  |  Holding {int(h_qty)} qty <span style='color:{h_pnl_color}'>{h_sign2}₹{h_pnl:,.0f}</span>"
+                header_plain += f"  |  Holding {int(h_qty)} qty  {h_sign2}₹{h_pnl:,.0f}"
             
-            with st.expander(header_txt):
+            with st.expander(header_plain):
                 if stock_fetch_err:
                     st.warning(f"Price fetch error: {stock_fetch_err}")
                 # Day change row
