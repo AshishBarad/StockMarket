@@ -233,6 +233,7 @@ total_pending = len(pending_signals) + len(pending_ai_orders)
 notif_badge = f" 🔔 ({total_pending}" + " new)" if total_pending > 0 else ""
 
 # --- Page Title with Live Indices ---
+col_title, col_nifty, col_sensex = st.columns([3, 1, 1])
 with col_title:
     st.markdown(f"""
     <div style="display:flex; align-items:center;">
