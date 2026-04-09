@@ -1,6 +1,7 @@
 import streamlit as st
 import plotly.graph_objs as go
 import os
+import time
 from dotenv import load_dotenv
 
 from utils.data_loader import load_stock_data, load_dhan_scrip_master
@@ -105,8 +106,6 @@ html, body, [class*="css"] {
 }
 </style>
 """, unsafe_allow_html=True)
-import time
-from utils.dhan_integration import get_dhan_indices, get_dhan_live_price, load_dhan_chart_data
 
 def get_cached_chart(symbol):
     ttl = st.session_state.get('refresh_chart', 2)
