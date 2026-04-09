@@ -159,7 +159,7 @@ def place_order_mock(symbol, transaction_type, quantity, order_type, product_typ
     
     # Need live price if submitting market simulator
     if price == 0 and sim_conf['sandbox_mode']:
-        l_price, _ = get_dhan_live_price(symbol)
+        l_price, _, _err = get_dhan_live_price(symbol)
         price = l_price
 
     if sim_conf['sandbox_mode']:
@@ -182,6 +182,51 @@ def place_order_mock(symbol, transaction_type, quantity, order_type, product_typ
         try: st.error(f"Failed to place order: {e}")
         except: pass
         return None
+
+def get_batch_quotes(symbols):
+    """
+    Fetch close prices for multiple NSE symbols in ONE API call using ohlc_data.
+    Returns dict: {symbol: (current_price, prev_close)}
+    Falls back to empty dict on error (caller uses cached values).
+    """
+    dhan = get_dhan_client()
+    if not dhan or not symbols:
+        return {}
+    try:
+        from utils.data_loader import load_dhan_scrip_master
+        import pandas as pd
+        from datetime import datetime
+        import time
+
+        df_master = load_dhan_scrip_master()
+        # Build sec_id -> symbol map
+        sid_to_sym = {}
+        sec_ids = []
+        for sym in symbols:
+            clean = sym.replace('.NS', '')
+            match = df_master[df_master['SEM_TRADING_SYMBOL'] == clean]
+            if not match.empty:
+                sid = str(int(match.iloc[0]['SEM_SMST_SECURITY_ID']))
+                sec_ids.append(sid)
+                sid_to_sym[sid] = clean
+
+        if not sec_ids:
+            return {}
+
+        # ohlc_data fetches open/high/low/close for multiple securities in one call
+        res = dhan.ohlc_data({'NSE_EQ': sec_ids})
+        result = {}
+        if res and res.get('status') == 'success':
+            data = res.get('data', {}).get('NSE_EQ', {})
+            for sid, vals in data.items():
+                sym = sid_to_sym.get(str(sid))
+                if sym:
+                    ltp = float(vals.get('last_price', vals.get('close', 0.0)))
+                    prev = float(vals.get('prev_close', ltp))
+                    result[sym] = (ltp, prev)
+        return result
+    except Exception:
+        return {}
 
 def get_dhan_indices():
     dhan = get_dhan_client()

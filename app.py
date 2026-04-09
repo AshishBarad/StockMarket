@@ -4,7 +4,11 @@ import os
 from dotenv import load_dotenv
 
 from utils.data_loader import load_stock_data, load_dhan_scrip_master
-from utils.dhan_integration import get_portfolio_summary, get_holding_for_symbol, place_order_mock, get_available_funds, get_holdings
+from utils.dhan_integration import (
+    get_portfolio_summary, get_holding_for_symbol, place_order_mock,
+    get_available_funds, get_holdings, get_dhan_live_price,
+    get_batch_quotes, get_dhan_indices, load_dhan_chart_data
+)
 from utils.model_predictor import (
     get_ai_status, toggle_ai_status, get_pending_signals, mark_signal_done,
     get_sim_config, update_sim_config, get_orders, update_order_status, add_order
@@ -115,16 +119,38 @@ def get_cached_chart(symbol):
         return data
     return cache['data']
 
+def refresh_watchlist_prices(symbols):
+    """
+    Batch-fetch all watchlist prices in ONE Dhan API call (fast!).
+    Caches for 30 seconds. Updates st.session_state.cache_price for all symbols.
+    """
+    if 'cache_price' not in st.session_state:
+        st.session_state.cache_price = {}
+    if 'last_batch_refresh' not in st.session_state:
+        st.session_state.last_batch_refresh = 0
+
+    now = time.time()
+    # Only re-fetch if 30s have elapsed (reduces API hammer)
+    if now - st.session_state.last_batch_refresh > 30 and symbols:
+        quotes = get_batch_quotes(symbols)  # {sym: (price, prev)}
+        for sym, (price, prev) in quotes.items():
+            st.session_state.cache_price[sym] = {
+                'time': now,
+                'data': (price, prev, None)
+            }
+        st.session_state.last_batch_refresh = now
+
 def get_cached_live_price(symbol):
-    ttl = st.session_state.get('refresh_watchlist', 2)
-    if 'cache_price' not in st.session_state: st.session_state.cache_price = {}
-    
-    cache = st.session_state.cache_price.get(symbol)
-    if not cache or time.time() - cache['time'] > ttl or len(cache['data']) != 3:
-        data = get_dhan_live_price(symbol)  # returns (cur, prev, err)
-        st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
-        return data
-    return cache['data']
+    """Read from the shared batch cache. Fallback to individual call if not cached."""
+    if 'cache_price' not in st.session_state:
+        st.session_state.cache_price = {}
+    entry = st.session_state.cache_price.get(symbol)
+    if entry and len(entry.get('data', ())) == 3:
+        return entry['data']
+    # Fallback: individual fetch (slower, only hits when not in batch cache)
+    data = get_dhan_live_price(symbol)
+    st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
+    return data
 
 # --- Top Header: Nifty / Sensex ---
 def get_indices():
@@ -334,6 +360,8 @@ with tab_watchlist:
     if not st.session_state.watchlist:
         st.info("Search above to add stocks to your Watchlist.")
     else:
+        # One API call for all symbols, then read from cache per-row (fast!)
+        refresh_watchlist_prices(st.session_state.watchlist)
         for symbol in st.session_state.watchlist:
             cur_price, prev_price, stock_fetch_err = get_cached_live_price(symbol)
             day_chg = round(cur_price - prev_price, 2)
