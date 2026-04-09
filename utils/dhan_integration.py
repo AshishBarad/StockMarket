@@ -143,6 +143,55 @@ def get_portfolio_summary():
     
     return total_invested, total_current, pnl, pnl_pct
 
+def get_day_pnl():
+    """
+    Returns (day_pnl, day_pnl_pct) for today's trading activity.
+    Sandbox: computed from paper_trades where date = today.
+    Live   : computed from Dhan positions API (unrealised + realised).
+    Resets automatically at midnight since it only looks at today's date.
+    """
+    try:
+        sim_conf = get_sim_config()
+        if sim_conf['sandbox_mode']:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            # Sold value - bought value for today's trades
+            c.execute("""
+                SELECT
+                    SUM(CASE WHEN action='SELL' THEN qty * avg_price ELSE 0 END) as sell_val,
+                    SUM(CASE WHEN action='BUY'  THEN qty * avg_price ELSE 0 END) as buy_val
+                FROM paper_trades
+                WHERE date(timestamp) = date('now')
+            """)
+            row = c.fetchone()
+            conn.close()
+            sell_val = float(row[0] or 0.0)
+            buy_val  = float(row[1] or 0.0)
+            day_pnl  = sell_val - buy_val
+            day_pnl_pct = (day_pnl / buy_val * 100) if buy_val > 0 else 0.0
+            return day_pnl, day_pnl_pct
+
+        # Live mode: use Dhan positions
+        dhan = get_dhan_client()
+        if not dhan:
+            return 0.0, 0.0
+        resp = dhan.get_positions()
+        if not resp or resp.get('status') != 'success':
+            return 0.0, 0.0
+        positions = resp.get('data', [])
+        total_realised    = sum(float(p.get('realizedProfit', 0)) for p in positions)
+        total_unrealised  = sum(float(p.get('unrealizedProfit', p.get('unrealisedProfit', 0))) for p in positions)
+        day_pnl = total_realised + total_unrealised
+        # Approx % based on net buy value
+        net_buy = sum(
+            float(p.get('buyAvg', 0)) * float(p.get('buyQty', 0))
+            for p in positions
+        )
+        day_pnl_pct = (day_pnl / net_buy * 100) if net_buy > 0 else 0.0
+        return day_pnl, day_pnl_pct
+    except Exception:
+        return 0.0, 0.0
+
 def get_holding_for_symbol(symbol):
     holdings_resp = get_holdings()
     if not holdings_resp or holdings_resp.get("status") != "success":

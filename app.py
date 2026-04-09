@@ -7,7 +7,7 @@ from utils.data_loader import load_stock_data, load_dhan_scrip_master
 from utils.dhan_integration import (
     get_portfolio_summary, get_holding_for_symbol, place_order_mock,
     get_available_funds, get_holdings, get_dhan_live_price,
-    get_batch_quotes, get_dhan_indices, load_dhan_chart_data
+    get_batch_quotes, get_dhan_indices, load_dhan_chart_data, get_day_pnl
 )
 from utils.model_predictor import (
     get_ai_status, toggle_ai_status, get_pending_signals, mark_signal_done,
@@ -207,9 +207,13 @@ st.divider()
 # --- Portfolio Summary & Margin ---
 margin_val = get_available_funds()
 inv_val, cur_val, pnl, pnl_pct = get_portfolio_summary()
+day_pnl, day_pnl_pct = get_day_pnl()
 
-color_class = "green" if pnl >= 0 else "red"
-sign = "+" if pnl >= 0 else ""
+color_class   = "green" if pnl >= 0 else "red"
+sign          = "+" if pnl >= 0 else ""
+day_color     = "#4caf50" if day_pnl >= 0 else "#ff5722"
+day_sign      = "+" if day_pnl >= 0 else ""
+day_arrow     = "▲" if day_pnl >= 0 else "▼"
 
 st.subheader("Funds & Portfolio")
 st.markdown(f"""
@@ -227,7 +231,11 @@ st.markdown(f"""
         <div class="metric-value">₹ {cur_val:,.2f}</div>
     </div>
     <div class="metric-card">
-        <div class="metric-label">Overall P&L</div>
+        <div class="metric-label">Day P&amp;L</div>
+        <div class="metric-value" style="color:{day_color}">{day_arrow} {day_sign}₹ {abs(day_pnl):,.2f} <span style="font-size:16px;">({day_sign}{day_pnl_pct:.2f}%)</span></div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Overall P&amp;L</div>
         <div class="metric-value {color_class}">{sign}₹ {pnl:,.2f} <span style="font-size:16px;">({sign}{pnl_pct:.2f}%)</span></div>
     </div>
 </div>
