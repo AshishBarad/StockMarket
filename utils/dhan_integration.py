@@ -296,47 +296,59 @@ def get_dhan_indices():
     if not dhan: return nifty, sensex, nifty_chg, nifty_pct, sensex_chg, sensex_pct, "Dhan API Not Connected"
     
     import pandas as pd
-    from datetime import datetime
+    from datetime import datetime, time as dtime
     import time
+    import pytz
     try:
-        now_dt = datetime.today().strftime('%Y-%m-%d')
-        past_dt = (datetime.today() - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
+        ist = pytz.timezone('Asia/Kolkata')
+        now_ist = datetime.now(ist)
+        now_t = now_ist.time()
+        is_market_hours = (now_ist.weekday() < 5) and (dtime(9, 15) <= now_t <= dtime(15, 30))
+
+        now_dt = now_ist.strftime('%Y-%m-%d')
+        past_dt = (now_ist - pd.Timedelta(days=5)).strftime('%Y-%m-%d')
         
-        # NIFTY 50 -> SEC_ID 13, IDX_I segment, INDEX instrument
-        res = dhan.historical_daily_data(
-            security_id='13', exchange_segment='IDX_I',
-            instrument_type='INDEX', from_date=past_dt, to_date=now_dt
-        )
-        if res and res.get('status') == 'success':
-            data = res.get('data', {})
-            closes = data.get('close', [])
-            if len(closes) >= 2:
-                nifty = float(closes[-1])
-                prev = float(closes[-2])
-                nifty_chg = round(nifty - prev, 2)
-                nifty_pct = round((nifty_chg / prev) * 100, 2)
-            elif len(closes) == 1:
-                nifty = float(closes[-1])
-            
-        # RATE LIMITING: 1 request per second for Data APIs
-        time.sleep(1.05)
-            
-        # SENSEX -> SEC_ID 51, IDX_I segment, INDEX instrument
-        res = dhan.historical_daily_data(
-            security_id='51', exchange_segment='IDX_I',
-            instrument_type='INDEX', from_date=past_dt, to_date=now_dt
-        )
-        if res and res.get('status') == 'success':
-            data = res.get('data', {})
-            closes = data.get('close', [])
-            if len(closes) >= 2:
-                sensex = float(closes[-1])
-                prev = float(closes[-2])
-                sensex_chg = round(sensex - prev, 2)
-                sensex_pct = round((sensex_chg / prev) * 100, 2)
-            elif len(closes) == 1:
-                sensex = float(closes[-1])
-            
+        def _fetch_idx(sec_id):
+            if is_market_hours:
+                # Get latest minute bar for live tick
+                res = dhan.intraday_minute_data(
+                    security_id=sec_id, exchange_segment='IDX_I',
+                    instrument_type='INDEX'
+                )
+                if res and res.get('status') == 'success' and res.get('data', {}).get('close'):
+                    cur = float(res['data']['close'][-1])
+                    # Need prev close for day change. Fetch daily for that.
+                    res_d = dhan.historical_daily_data(
+                        security_id=sec_id, exchange_segment='IDX_I',
+                        instrument_type='INDEX', from_date=past_dt, to_date=now_dt
+                    )
+                    if res_d and res_d.get('status') == 'success' and len(res_d.get('data', {}).get('close', [])) >= 2:
+                        prev = float(res_d['data']['close'][-2])
+                        return cur, prev
+                    return cur, cur
+            else:
+                # Market closed, use historical daily
+                res = dhan.historical_daily_data(
+                    security_id=sec_id, exchange_segment='IDX_I',
+                    instrument_type='INDEX', from_date=past_dt, to_date=now_dt
+                )
+                if res and res.get('status') == 'success':
+                    closes = res.get('data', {}).get('close', [])
+                    if len(closes) >= 2:
+                        return float(closes[-1]), float(closes[-2])
+                    elif len(closes) == 1:
+                        return float(closes[-1]), float(closes[-1])
+            return 0.0, 0.0
+
+        nifty, nifty_prev = _fetch_idx('13')
+        time.sleep(1.05) # Rate limit
+        sensex, sensex_prev = _fetch_idx('51')
+
+        nifty_chg = round(nifty - nifty_prev, 2) if nifty_prev > 0 else 0.0
+        nifty_pct = round((nifty_chg / nifty_prev) * 100, 2) if nifty_prev > 0 else 0.0
+        sensex_chg = round(sensex - sensex_prev, 2) if sensex_prev > 0 else 0.0
+        sensex_pct = round((sensex_chg / sensex_prev) * 100, 2) if sensex_prev > 0 else 0.0
+
         return round(nifty, 2), round(sensex, 2), nifty_chg, nifty_pct, sensex_chg, sensex_pct, None
     except Exception as e:
         import traceback
