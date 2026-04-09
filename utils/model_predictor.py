@@ -76,8 +76,45 @@ def init_db():
         (id, ai_enabled, sandbox_mode, auto_execute, max_trades_daily, trade_amount, max_ai_stocks)
         VALUES (1, 0, 1, 0, 5, 10000.0, 10)""")
 
+    # ── Watchlist table ────────────────────────────────────────────────────────
+    c.execute('''CREATE TABLE IF NOT EXISTS watchlist (
+        symbol TEXT PRIMARY KEY
+    )''')
+
     conn.commit()
     conn.close()
+
+def get_db_watchlist():
+    """Retrieve all symbols from the permanent watchlist."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT symbol FROM watchlist")
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def add_db_watchlist(symbol):
+    """Add a symbol to the permanent watchlist."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO watchlist (symbol) VALUES (?)", (symbol,))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+def remove_db_watchlist(symbol):
+    """Remove a symbol from the permanent watchlist."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
+        conn.commit()
+        conn.close()
+    except:
+        pass
 
 
 def get_ai_status():

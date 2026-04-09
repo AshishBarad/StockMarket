@@ -12,7 +12,8 @@ from utils.dhan_integration import (
 )
 from utils.model_predictor import (
     get_ai_status, toggle_ai_status, get_pending_signals, mark_signal_done,
-    get_sim_config, update_sim_config, get_orders, update_order_status, add_order
+    get_sim_config, update_sim_config, get_orders, update_order_status, add_order,
+    get_db_watchlist, add_db_watchlist, remove_db_watchlist
 )
 
 # Load environment variables
@@ -22,7 +23,7 @@ st.set_page_config(page_title="Indian Stock Market Trading", layout="wide")
 
 # --- Initialize Session State ---
 if 'watchlist' not in st.session_state:
-    st.session_state.watchlist = []
+    st.session_state.watchlist = get_db_watchlist()
 if 'dhan_token' not in st.session_state:
     st.session_state.dhan_token = os.environ.get('DHAN_ACCESS_TOKEN', '')
 if 'dhan_client_id' not in st.session_state:
@@ -129,8 +130,8 @@ def refresh_watchlist_prices(symbols):
         st.session_state.last_batch_refresh = 0
 
     now = time.time()
-    # Only re-fetch if 10s have elapsed (reduces API hammer, but keeps it 'live')
-    if now - st.session_state.last_batch_refresh > 10 and symbols:
+    # Only re-fetch if 2s have elapsed for PRO real-time experience
+    if now - st.session_state.last_batch_refresh > 2 and symbols:
         quotes = get_batch_quotes(symbols)  # {sym: (price, prev)}
         for sym, (price, prev) in quotes.items():
             st.session_state.cache_price[sym] = {
@@ -387,6 +388,7 @@ with tab_watchlist:
         if st.button("+ Add", type="primary", use_container_width=True):
             if selected_symbol and selected_symbol not in st.session_state.watchlist:
                 st.session_state.watchlist.append(selected_symbol)
+                add_db_watchlist(selected_symbol)
                 st.rerun()
     
     if not st.session_state.watchlist:
@@ -447,6 +449,7 @@ with tab_watchlist:
                 with col_d:
                     if st.button("🗑️", key=f"del_{symbol}", use_container_width=True):
                         st.session_state.watchlist.remove(symbol)
+                        remove_db_watchlist(symbol)
                         st.rerun()
 
 # ---- TAB: AI ORDERS ----
@@ -558,3 +561,8 @@ with tab_inbox:
             st.markdown("<hr style='border-color:#2b2b2b;margin:4px 0'>", unsafe_allow_html=True)
     else:
         st.info("No pending AI signals. The agent will notify you here when it finds trade opportunities.")
+
+# --- Real-Time Autorefresh Logic (2-second interval) ---
+# This keeps the dashboard alive and ticking during market hours.
+time.sleep(2)
+st.rerun()
