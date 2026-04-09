@@ -129,8 +129,8 @@ def refresh_watchlist_prices(symbols):
         st.session_state.last_batch_refresh = 0
 
     now = time.time()
-    # Only re-fetch if 30s have elapsed (reduces API hammer)
-    if now - st.session_state.last_batch_refresh > 30 and symbols:
+    # Only re-fetch if 10s have elapsed (reduces API hammer, but keeps it 'live')
+    if now - st.session_state.last_batch_refresh > 10 and symbols:
         quotes = get_batch_quotes(symbols)  # {sym: (price, prev)}
         for sym, (price, prev) in quotes.items():
             st.session_state.cache_price[sym] = {
@@ -139,148 +139,6 @@ def refresh_watchlist_prices(symbols):
             }
         st.session_state.last_batch_refresh = now
 
-def get_cached_live_price(symbol):
-    """Read from the shared batch cache. Fallback to individual call if not cached."""
-    if 'cache_price' not in st.session_state:
-        st.session_state.cache_price = {}
-    entry = st.session_state.cache_price.get(symbol)
-    if entry and len(entry.get('data', ())) == 3:
-        return entry['data']
-    # Fallback: individual fetch (slower, only hits when not in batch cache)
-    data = get_dhan_live_price(symbol)
-    st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
-    return data
-
-# --- Top Header: Nifty / Sensex ---
-def get_indices():
-    ttl = st.session_state.get('refresh_indices', 2)
-    cached = st.session_state.get('cache_indices')
-    # Invalidate if missing, expired, OR wrong shape (old 3-tuple vs new 7-tuple)
-    if (not cached
-            or time.time() - cached['time'] > ttl
-            or len(cached['data']) != 7):
-        data = get_dhan_indices()
-        st.session_state.cache_indices = {'time': time.time(), 'data': data}
-        return data
-    return cached['data']
-
-nifty_val, sensex_val, nifty_chg, nifty_pct, sensex_chg, sensex_pct, idx_err = get_indices()
-
-# Count pending AI signals for notification badge
-pending_signals = get_pending_signals()
-pending_ai_orders = get_orders(source='AI', status='PENDING_APPROVAL')
-total_pending = len(pending_signals) + len(pending_ai_orders)
-notif_badge = f" 🔔 ({total_pending}" + " new)" if total_pending > 0 else ""
-
-# --- Page Title with Live Indices ---
-col_title, col_nifty, col_sensex = st.columns([3, 1, 1])
-with col_title:
-    st.title(f"📈 Stock Market Dashboard{notif_badge}")
-
-def _idx_card(label, val, chg, pct, base_color):
-    """Render a single index card with change badge."""
-    if val == 0.0:
-        return f"""
-        <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'>
-          <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
-          <div style='font-size:24px;color:#ff5722'>⚠ Error</div>
-        </div>"""
-    sign = "+" if chg >= 0 else ""
-    chg_color = "#4caf50" if chg >= 0 else "#ff5722"
-    arrow = "▲" if chg >= 0 else "▼"
-    return f"""
-    <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px'>
-      <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
-      <div style='font-size:24px;font-weight:500;color:{base_color}'>{val:,.2f}</div>
-      <div style='font-size:13px;color:{chg_color};margin-top:4px'>
-        {arrow} {sign}{chg:,.2f} ({sign}{pct:.2f}%)
-      </div>
-    </div>"""
-
-with col_nifty:
-    st.markdown(_idx_card("NIFTY 50", nifty_val, nifty_chg, nifty_pct, "#4caf50"), unsafe_allow_html=True)
-with col_sensex:
-    st.markdown(_idx_card("SENSEX", sensex_val, sensex_chg, sensex_pct, "#4184f3"), unsafe_allow_html=True)
-st.divider()
-
-# --- Portfolio Summary & Margin ---
-margin_val = get_available_funds()
-inv_val, cur_val, pnl, pnl_pct = get_portfolio_summary()
-day_pnl, day_pnl_pct = get_day_pnl()
-
-color_class   = "green" if pnl >= 0 else "red"
-sign          = "+" if pnl >= 0 else ""
-day_color     = "#4caf50" if day_pnl >= 0 else "#ff5722"
-day_sign      = "+" if day_pnl >= 0 else ""
-day_arrow     = "▲" if day_pnl >= 0 else "▼"
-
-st.subheader("Funds & Portfolio")
-st.markdown(f"""
-<div class="metric-row">
-    <div class="metric-card">
-        <div class="metric-label">Available Margin</div>
-        <div class="metric-value" style="color: #4184f3;">₹ {margin_val:,.2f}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Invested</div>
-        <div class="metric-value">₹ {inv_val:,.2f}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Current Value</div>
-        <div class="metric-value">₹ {cur_val:,.2f}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Day P&amp;L</div>
-        <div class="metric-value" style="color:{day_color}">{day_arrow} {day_sign}₹ {abs(day_pnl):,.2f} <span style="font-size:16px;">({day_sign}{day_pnl_pct:.2f}%)</span></div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Overall P&amp;L</div>
-        <div class="metric-value {color_class}">{sign}₹ {pnl:,.2f} <span style="font-size:16px;">({sign}{pnl_pct:.2f}%)</span></div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# Open positions from holdings
-holdings_data = get_holdings()
-if holdings_data and holdings_data.get("status") == "success" and holdings_data.get("data"):
-    st.markdown("**(Live Open Positions)**")
-    for h in holdings_data["data"]:
-        sym = h.get('tradingSymbol')
-        h_qty = float(h.get('totalQty', h.get('heldQuantity', 0)))
-        if h_qty <= 0: continue
-        h_avg = float(h.get('avgCostPrice', h.get('costPrice', 0)))
-        cur_price2, prev_price2, _ = get_cached_live_price(sym)
-        h_cur = cur_price2
-        day_chg = round(cur_price2 - prev_price2, 2)
-        day_pct = round((day_chg / prev_price2) * 100, 2) if prev_price2 > 0 else 0.0
-        chg_sign = "+" if day_chg >= 0 else ""
-        chg_color = "#4caf50" if day_chg >= 0 else "#ff5722"
-        chg_arrow = "▲" if day_chg >= 0 else "▼"
-        h_pnl = (h_cur - h_avg) * h_qty
-        h_pct = (h_pnl / (h_avg * h_qty) * 100) if h_avg > 0 else 0.0
-        hc_class = "green" if h_pnl >= 0 else "red"
-        h_sign = "+" if h_pnl >= 0 else ""
-        chg_label = f"{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)"
-        with st.expander(f"📦 {sym} ──── Qty: {int(h_qty)}  {chg_label}"):
-            st.markdown(
-                f"""**Avg:** `₹{h_avg:,.2f}` | **CMP:** `₹{h_cur:,.2f}` """
-                f"""<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"""
-                f""" | **P&L:** <span class="{hc_class}">{h_sign}₹{h_pnl:,.2f} ({h_sign}{h_pct:.2f}%)</span>""",
-                unsafe_allow_html=True
-            )
-            col_s, col_c = st.columns(2)
-            with col_s:
-                if st.button("Exit Position", key=f"pos_exit_{sym}", use_container_width=True):
-                    order_ticket_modal(sym, "SELL", h_qty)
-            with col_c:
-                if st.button("Chart", key=f"pos_chart_{sym}", use_container_width=True):
-                    chart_modal(sym)
-
-st.divider()
-
-# ==========================================
-# MODALS — defined here so they exist before tab buttons call them
-# ==========================================
 @st.dialog("Live Price Chart", width="large")
 def chart_modal(symbol):
     st.write(f"Loading chart for {symbol}...")
@@ -339,6 +197,173 @@ def order_ticket_modal(symbol, default_txn="BUY", default_qty=1, default_limit=0
         if is_ai and st.button("✗ Reject", use_container_width=True):
             mark_signal_done(ai_signal_idx, "REJECTED")
             st.rerun()
+
+def get_cached_live_price(symbol):
+    """Read from the shared batch cache. Fallback to individual call if not cached."""
+    if 'cache_price' not in st.session_state:
+        st.session_state.cache_price = {}
+    entry = st.session_state.cache_price.get(symbol)
+    if entry and len(entry.get('data', ())) == 3:
+        return entry['data']
+    # Fallback: individual fetch (slower, only hits when not in batch cache)
+    data = get_dhan_live_price(symbol)
+    st.session_state.cache_price[symbol] = {'time': time.time(), 'data': data}
+    return data
+
+# --- Top Header: Nifty / Sensex ---
+def get_indices():
+    ttl = st.session_state.get('refresh_indices', 2)
+    cached = st.session_state.get('cache_indices')
+    # Invalidate if missing, expired, OR wrong shape (old 3-tuple vs new 7-tuple)
+    if (not cached
+            or time.time() - cached['time'] > ttl
+            or len(cached['data']) != 7):
+        data = get_dhan_indices()
+        st.session_state.cache_indices = {'time': time.time(), 'data': data}
+        return data
+    return cached['data']
+
+nifty_val, sensex_val, nifty_chg, nifty_pct, sensex_chg, sensex_pct, idx_err = get_indices()
+
+# Count pending AI signals for notification badge
+pending_signals = get_pending_signals()
+pending_ai_orders = get_orders(source='AI', status='PENDING_APPROVAL')
+total_pending = len(pending_signals) + len(pending_ai_orders)
+notif_badge = f" 🔔 ({total_pending}" + " new)" if total_pending > 0 else ""
+
+# --- Page Title with Live Indices ---
+col_title, col_nifty, col_sensex = st.columns([3, 1, 1])
+with col_title:
+    st.title(f"📈 Stock Market Dashboard{notif_badge}")
+
+def _idx_card(label, val, chg, pct, base_color, err_msg=None):
+    """Render a single index card with change badge."""
+    if val == 0.0:
+        return f"""
+        <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px;border-left:4px solid #ff5722'>
+          <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
+          <div style='font-size:24px;color:#ff5722'>⚠ Error</div>
+          <div style='font-size:10px;color:#ff5722;margin-top:4px'>{err_msg if err_msg else 'API Error'}</div>
+        </div>"""
+    sign = "+" if chg >= 0 else ""
+    chg_color = "#4caf50" if chg >= 0 else "#ff5722"
+    arrow = "▲" if chg >= 0 else "▼"
+    return f"""
+    <div style='padding:16px;background:#1e1e1e;border-radius:4px;margin-top:14px;border-left:4px solid {base_color}'>
+      <div style='font-size:11px;color:#9B9B9B;text-transform:uppercase'>{label}</div>
+      <div style='font-size:24px;font-weight:500;color:{base_color}'>{val:,.2f}</div>
+      <div style='font-size:13px;color:{chg_color};margin-top:4px'>
+        {arrow} {sign}{chg:,.2f} ({sign}{pct:.2f}%)
+      </div>
+    </div>"""
+
+with col_nifty:
+    st.markdown(_idx_card("NIFTY 50", nifty_val, nifty_chg, nifty_pct, "#4caf50", idx_err), unsafe_allow_html=True)
+with col_sensex:
+    st.markdown(_idx_card("SENSEX", sensex_val, sensex_chg, sensex_pct, "#4184f3", idx_err), unsafe_allow_html=True)
+st.divider()
+
+# --- Pre-fetch all needed prices in batch ---
+holdings_data = get_holdings()
+active_positions = []
+if holdings_data and holdings_data.get("status") == "success":
+    active_positions = [h.get('tradingSymbol') for h in holdings_data.get("data", []) if float(h.get('totalQty', 0)) > 0]
+
+all_needed_symbols = list(set(st.session_state.watchlist + active_positions))
+refresh_watchlist_prices(all_needed_symbols)
+
+# --- Portfolio Summary & Margin ---
+margin_val = get_available_funds()
+inv_val, cur_val, pnl, pnl_pct = get_portfolio_summary()
+
+# Re-calculate Day P&L more accurately using CMP vs Prev Close for open positions
+# plus any realized profit for today.
+day_pnl = 0.0
+realized_today, _ = get_day_pnl() # Realized is handled at worker level in sandbox
+day_pnl += realized_today
+
+if active_positions:
+    for h in holdings_data["data"]:
+        sym = h.get('tradingSymbol')
+        h_qty = float(h.get('totalQty', 0))
+        if h_qty <= 0: continue
+        cur_p, prev_p, _ = get_cached_live_price(sym)
+        if cur_p > 0 and prev_p > 0:
+            day_pnl += (cur_p - prev_p) * h_qty
+
+day_pnl_pct = (day_pnl / inv_val * 100) if inv_val > 0 else 0.0
+
+color_class   = "green" if pnl >= 0 else "red"
+sign          = "+" if pnl >= 0 else ""
+day_color     = "#4caf50" if day_pnl >= 0 else "#ff5722"
+day_sign      = "+" if day_pnl >= 0 else ""
+day_arrow     = "▲" if day_pnl >= 0 else "▼"
+
+st.subheader("Funds & Portfolio")
+st.markdown(f"""
+<div class="metric-row">
+    <div class="metric-card">
+        <div class="metric-label">Available Margin</div>
+        <div class="metric-value" style="color: #4184f3;">₹ {margin_val:,.2f}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Invested</div>
+        <div class="metric-value">₹ {inv_val:,.2f}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Current Value</div>
+        <div class="metric-value">₹ {cur_val:,.2f}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Day P&amp;L</div>
+        <div class="metric-value" style="color:{day_color}">{day_arrow} {day_sign}₹ {abs(day_pnl):,.2f} <span style="font-size:16px;">({day_sign}{day_pnl_pct:.2f}%)</span></div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Overall P&amp;L</div>
+        <div class="metric-value {color_class}">{sign}₹ {pnl:,.2f} <span style="font-size:16px;">({sign}{pnl_pct:.2f}%)</span></div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Open positions from holdings
+holdings_data = get_holdings()
+if holdings_data and holdings_data.get("status") == "success" and holdings_data.get("data"):
+    st.markdown("**(Live Open Positions)**")
+    for h in holdings_data["data"]:
+        sym = h.get('tradingSymbol')
+        h_qty = float(h.get('totalQty', h.get('heldQuantity', 0)))
+        if h_qty <= 0: continue
+        h_avg = float(h.get('avgCostPrice', h.get('costPrice', 0)))
+        cur_price2, prev_price2, _ = get_cached_live_price(sym)
+        h_cur = cur_price2
+        day_chg = round(cur_price2 - prev_price2, 2)
+        day_pct = round((day_chg / prev_price2) * 100, 2) if prev_price2 > 0 else 0.0
+        chg_sign = "+" if day_chg >= 0 else ""
+        chg_color = "#4caf50" if day_chg >= 0 else "#ff5722"
+        chg_arrow = "▲" if day_chg >= 0 else "▼"
+        h_total_buy = h_avg * h_qty
+        h_pnl = (h_cur - h_avg) * h_qty
+        h_pct = (h_pnl / h_total_buy * 100) if h_total_buy > 0 else 0.0
+        hc_class = "green" if h_pnl >= 0 else "red"
+        h_sign = "+" if h_pnl >= 0 else ""
+        chg_label = f"{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)"
+        with st.expander(f"📦 {sym} ──── Qty: {int(h_qty)}  {chg_label}"):
+            st.markdown(
+                f"""**Avg:** `₹{h_avg:,.2f}` | **Invested:** `₹{h_total_buy:,.2f}` | **CMP:** `₹{h_cur:,.2f}` """
+                f"""<span style='color:{chg_color}'>{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)</span>"""
+                f""" | **P&L:** <span class="{hc_class}">{h_sign}₹{h_pnl:,.2f} ({h_sign}{h_pct:.2f}%)</span>""",
+                unsafe_allow_html=True
+            )
+            col_s, col_c = st.columns(2)
+            with col_s:
+                if st.button("Exit Position", key=f"pos_exit_{sym}", use_container_width=True):
+                    order_ticket_modal(sym, "SELL", h_qty)
+            with col_c:
+                if st.button("Chart", key=f"pos_chart_{sym}", use_container_width=True):
+                    chart_modal(sym)
+
+st.divider()
+
 
 # ==========================================
 # MAIN CONTENT TABS

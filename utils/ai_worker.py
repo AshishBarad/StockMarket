@@ -34,8 +34,10 @@ MARKET_OPEN  = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 
 def is_market_open():
-    """Returns True only on weekdays within NSE trading hours."""
-    now = datetime.now()
+    """Returns True only on weekdays within NSE trading hours (IST)."""
+    import pytz
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
     if now.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
     return MARKET_OPEN <= now.time() <= MARKET_CLOSE

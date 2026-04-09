@@ -251,13 +251,15 @@ def get_batch_quotes(symbols):
         # Build sec_id -> symbol map
         sid_to_sym = {}
         sec_ids = []
+        df_master['SEM_TRADING_SYMBOL_UPPER'] = df_master['SEM_TRADING_SYMBOL'].str.upper()
+        
         for sym in symbols:
-            clean = sym.replace('.NS', '')
-            match = df_master[df_master['SEM_TRADING_SYMBOL'] == clean]
+            clean = sym.replace('.NS', '').upper()
+            match = df_master[df_master['SEM_TRADING_SYMBOL_UPPER'] == clean]
             if not match.empty:
                 sid = str(int(match.iloc[0]['SEM_SMST_SECURITY_ID']))
                 sec_ids.append(sid)
-                sid_to_sym[sid] = clean
+                sid_to_sym[sid] = sym # Keep original symbol key (e.g. RELIANCE.NS)
 
         if not sec_ids:
             return {}
@@ -273,6 +275,8 @@ def get_batch_quotes(symbols):
                     ltp = float(vals.get('last_price', vals.get('close', 0.0)))
                     prev = float(vals.get('prev_close', ltp))
                     result[sym] = (ltp, prev)
+        else:
+            print(f"Batch quote failed: {res.get('remarks') if res else 'No response'}")
         return result
     except Exception:
         return {}
@@ -327,6 +331,9 @@ def get_dhan_indices():
             
         return round(nifty, 2), round(sensex, 2), nifty_chg, nifty_pct, sensex_chg, sensex_pct, None
     except Exception as e:
+        import traceback
+        err_detail = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"Index fetch failed: {err_detail}")
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, str(e)
 
 def get_dhan_live_price(symbol):
@@ -354,8 +361,12 @@ def get_dhan_live_price(symbol):
         past_dt  = (datetime.today() - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
 
         # Check if inside NSE market hours (9:15 AM - 3:30 PM IST weekdays)
-        now_t = datetime.now().time()
-        is_market_hours = dtime(9, 15) <= now_t <= dtime(15, 30)
+        import pytz
+        ist = pytz.timezone('Asia/Kolkata')
+        now_ist = datetime.now(ist)
+        now_t = now_ist.time()
+        
+        is_market_hours = (now_ist.weekday() < 5) and (dtime(9, 15) <= now_t <= dtime(15, 30))
 
         time.sleep(1.05)  # rate limit
 
