@@ -233,9 +233,28 @@ total_pending = len(pending_signals) + len(pending_ai_orders)
 notif_badge = f" 🔔 ({total_pending}" + " new)" if total_pending > 0 else ""
 
 # --- Page Title with Live Indices ---
-col_title, col_nifty, col_sensex = st.columns([3, 1, 1])
 with col_title:
-    st.title(f"📈 Stock Market Dashboard{notif_badge}")
+    st.markdown(f"""
+    <div style="display:flex; align-items:center;">
+        <h1 style="margin:0;">📈 Stock Market Dashboard{notif_badge}</h1>
+        <div style="margin-left:15px; display:flex; align-items:center; background:#1e1e1e; padding:4px 10px; border-radius:15px; border:1px solid #2b2b2b;">
+            <div class="heartbeat"></div>
+            <span style="color:#4caf50; font-size:12px; font-weight:600; margin-left:5px;">LIVE</span>
+        </div>
+    </div>
+    <style>
+    .heartbeat {{
+        width: 8px; height: 8px; background: #4caf50; border-radius: 50%;
+        box-shadow: 0 0 0 rgba(76, 175, 80, 0.4);
+        animation: pulse 2s infinite;
+    }}
+    @keyframes pulse {{
+        0% {{ box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }}
+        70% {{ box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }}
+        100% {{ box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }}
+    }}
+    </style>
+    """, unsafe_allow_html=True)
 
 def _idx_card(label, val, chg, pct, base_color, err_msg=None):
     """Render a single index card with change badge."""
@@ -275,7 +294,7 @@ refresh_watchlist_prices(all_needed_symbols)
 
 # --- Portfolio Summary & Margin ---
 margin_val = get_available_funds()
-inv_val, cur_val, pnl, pnl_pct = get_portfolio_summary()
+inv_val, cur_val, pnl, pnl_pct = get_portfolio_summary(live_prices=st.session_state.cache_price)
 
 # Re-calculate Day P&L more accurately using CMP vs Prev Close for open positions
 # plus any realized profit for today.
@@ -405,9 +424,15 @@ with tab_watchlist:
             chg_arrow = "▲" if day_chg >= 0 else "▼"
             holding = get_holding_for_symbol(symbol)
             
-            # Plain-text header (st.expander doesn't render HTML)
+            # Plain-text header
+            update_ts = ""
+            if symbol in st.session_state.cache_price:
+                cached_time = st.session_state.cache_price[symbol]['time']
+                secs_ago = int(time.time() - cached_time)
+                update_ts = f" • {secs_ago}s ago"
+
             chg_label = f"{chg_arrow} {chg_sign}{day_chg:,.2f} ({chg_sign}{day_pct:.2f}%)"
-            header_txt = f"{symbol}  ──  \u20b9{cur_price:,.2f}  {chg_label}"
+            header_txt = f"{symbol}  ──  \u20b9{cur_price:,.2f}  {chg_label}{update_ts}"
             if holding:
                 h_qty = float(holding.get('totalQty', holding.get('heldQuantity', 0)))
                 h_avg = float(holding.get('avgCostPrice', holding.get('costPrice', 0)))

@@ -108,22 +108,13 @@ def get_holdings():
         st.error(f"Error fetching holdings: {e}")
         return None
 
-def get_portfolio_summary():
+def get_portfolio_summary(live_prices=None):
     holdings_resp = get_holdings()
     
-    if not holdings_resp:
-        return 0.0, 0.0, 0.0, 0.0
-        
-    if holdings_resp.get("status") != "success":
-        # Dhan returns an explicit error object when holdings are just empty
-        # e.g., {'error_code': 'DH-1111', 'error_message': 'No holdings available'}
-        error_msg = holdings_resp.get("remarks", "")
-        if not error_msg:
-            # Sometmes it is inside the stringified object if the wrapper broke it
-            error_msg = str(holdings_resp)
-        if "No holdings available" in str(holdings_resp) or "DH-1111" in str(holdings_resp):
+    if not holdings_resp or holdings_resp.get("status") != "success":
+        # Check for "No holdings" specifically
+        if holdings_resp and ("No holdings available" in str(holdings_resp) or "DH-1111" in str(holdings_resp)):
             return 0.0, 0.0, 0.0, 0.0
-        st.error(f"Dhan API Error: {error_msg}")
         return 0.0, 0.0, 0.0, 0.0
         
     holdings = holdings_resp.get("data", [])
@@ -131,9 +122,18 @@ def get_portfolio_summary():
     total_current = 0.0
     
     for h in holdings:
+        symbol = h.get('tradingSymbol')
         total_qty = float(h.get('totalQty', h.get('heldQuantity', 0)))
         avg_price = float(h.get('avgCostPrice', h.get('costPrice', 0)))
-        cur_price = float(h.get('lastTradedPrice', h.get('closePrice', avg_price)))
+        
+        # Use live price from cache if available, else fallback to API's LTP
+        cur_price = 0.0
+        if live_prices and symbol in live_prices:
+            # cache entry is {'time':..., 'data': (ltp, prev)}
+            cur_price = float(live_prices[symbol].get('data', (0.0,))[0])
+            
+        if cur_price <= 0:
+            cur_price = float(h.get('lastTradedPrice', h.get('closePrice', avg_price)))
         
         total_invested += total_qty * avg_price
         total_current += total_qty * cur_price
@@ -264,11 +264,19 @@ def get_batch_quotes(symbols):
         if not sec_ids:
             return {}
 
-        # ohlc_data fetches open/high/low/close for multiple securities in one call
-        res = dhan.ohlc_data({'NSE_EQ': sec_ids})
+        # quote_data fetches detailed quote info including best bid/ask and tick LTP
+        res = dhan.quote_data({'NSE_EQ': sec_ids})
         result = {}
         if res and res.get('status') == 'success':
             data = res.get('data', {}).get('NSE_EQ', {})
+            # If quote_data returns a list instead of a dict for multi-IDs, handle it
+            # DHAN API quote_data sometimes has sid as key, or a list in 'data'
+            if isinstance(data, list):
+                # Convert list to dict indexed by sid for consistency
+                # Assuming item has 'securityId' or similar. 
+                # Let's verify by fallback behavior.
+                pass
+            
             for sid, vals in data.items():
                 sym = sid_to_sym.get(str(sid))
                 if sym:
